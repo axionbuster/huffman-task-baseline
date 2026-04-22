@@ -7,3 +7,8 @@ packages: .
 -- Example (uncomment and adjust if you want strict pinning):
 -- with-compiler: ghc-9.14.1
 -- index-state: 2026-01-01T00:00:00Z
+
+-- Keep the default plan optimized so `cabal list-bin exe:huffman` resolves to
+-- the same executable path that the sanity workflow builds with `cabal build -O2`.
+package *
+  optimization: 2
