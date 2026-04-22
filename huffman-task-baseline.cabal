@@ -1,0 +1,17 @@
+cabal-version:      2.4
+name:               huffman-task-baseline
+version:            0.1.0.0
+build-type:         Simple
+
+executable huffman
+  main-is:          Main.hs
+  hs-source-dirs:   src
+  other-modules:
+      Huffman.BitStream
+    , Huffman.Codec
+  build-depends:
+      base >=4.20 && <4.23
+    , array
+    , bytestring
+    , containers
+  default-language: Haskell2010
