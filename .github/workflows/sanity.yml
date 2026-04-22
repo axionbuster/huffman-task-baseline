@@ -1,0 +1,97 @@
+name: Sanity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+concurrency:
+  group: sanity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Try GHC 9.14.1
+        id: ghc-primary
+        continue-on-error: true
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: '3.12'
+
+      - name: Fallback GHC 9.12.2
+        if: steps.ghc-primary.outcome == 'failure'
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.12.2'
+          cabal-version: '3.12'
+
+      - name: Cabal update
+        run: cabal update
+
+      - name: Build
+        run: cabal build -O2 exe:huffman
+
+      - name: Locate binary
+        id: bin
+        run: |
+          path=$(cabal list-bin exe:huffman)
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          cp "$path" ./huffman
+          ls -la ./huffman
+
+      - name: Roundtrip samples
+        run: |
+          set -euo pipefail
+          fail=0
+          for input in samples/*.bin; do
+            base=$(basename "$input" .bin)
+            ./huffman encode < "$input" > "$base.enc"
+            ./huffman decode < "$base.enc"  > "$base.dec"
+            if cmp -s "$input" "$base.dec"; then
+              printf 'OK   %s  raw=%s  enc=%s\n' "$base" "$(stat -c%s "$input")" "$(stat -c%s "$base.enc")"
+            else
+              printf 'FAIL %s  roundtrip mismatch\n' "$base"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  dispatch-grader:
+    needs: sanity
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger grader
+        env:
+          GH_TOKEN: ${{ secrets.GRADER_DISPATCH_TOKEN }}
+          GRADER_REPO: ${{ vars.GRADER_REPO || 'axionbuster/huffman-grader' }}
+          CONDITION: ${{ vars.CONDITION || 'unset' }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "GRADER_DISPATCH_TOKEN not set; skipping grader dispatch."
+            exit 0
+          fi
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GRADER_REPO}/dispatches" \
+            -d @- <<EOF
+          {
+            "event_type": "grade-request",
+            "client_payload": {
+              "repo": "${{ github.repository }}",
+              "pr":   ${{ github.event.pull_request.number }},
+              "sha":  "${{ github.event.pull_request.head.sha }}",
+              "condition": "${CONDITION}"
+            }
+          }
+          EOF
